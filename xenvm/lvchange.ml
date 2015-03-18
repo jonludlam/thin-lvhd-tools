@@ -26,9 +26,20 @@ let lvchange_activate copts (vg_name,lv_name_opt) physical_device =
     >>= fun devices ->
     let targets = Mapper.to_targets devices vg lv in
     let name = Mapper.name_of vg lv in
-    Devmapper.create name targets;
-    Devmapper.mknod name path 0o0600;
-    return ())
+    begin
+      try
+	Devmapper.create name targets;
+	Devmapper.mknod name path 0o0600;
+      with
+      | Failure "dm_task_run failed" as e -> begin
+	  (* Might be that the device is already active. We should check that 'targets' matches here. *)
+          match Devmapper.stat name with
+	  | Some st -> ()
+	  | None -> raise e
+	end;
+    end;
+    Lwt.return ()
+  )
 
 let lvchange_deactivate copts (vg_name,lv_name_opt) =
   let lv_name = match lv_name_opt with Some l -> l | None -> failwith "Need LV name" in
@@ -60,6 +71,10 @@ let action_arg =
 Activation  of a logical volume creates a symbolic link /dev/VolumeGroupName/LogicalVolumeName pointing to the device node.  This link is removed on deactivation.  All software and scripts should access the device through this symbolic link and present this as the name of the device.  The location and name of the underlying device node may depend on the  distribution and configuration (e.g. udev) and might change from release to release." in
   let a = Arg.(value & opt (some char) None & info ["a"] ~docv:"ACTIVATE" ~doc) in
   Term.(pure parse_action $ a)
+
+let perm_arg =
+  let doc = "Change the permissions of logical volume. Possible values are 'r' or 'rw'" in
+  Arg.(value & opt (some string) None & info ["p"] ~docv:"PERMISSION" ~doc)
 
 let lvchange_cmd =
   let doc = "Change the attributes of a logical volume" in
