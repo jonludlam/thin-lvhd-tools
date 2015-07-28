@@ -593,7 +593,9 @@ module FreePool = struct
 
     VolumeManager.read (fun x -> return (`Ok x))
     >>= function
-    | `Error _ -> return () (* skip if there's no LVM to read *)
+    | `Error _ ->
+      debug "top_up_free_volumes: in error path";
+      return () (* skip if there's no LVM to read *)
     | `Ok x ->
       let extent_size = x.Lvm.Vg.extent_size in (* in sectors *)
       let extent_size_mib = Int64.(div (mul extent_size (of_int sector_size)) (mul 1024L 1024L)) in
@@ -603,6 +605,7 @@ module FreePool = struct
          match try Some(Lvm.Vg.LVs.find freeid x.Lvm.Vg.lvs) with _ -> None with
          | Some lv ->
            let size_mib = Int64.mul (Lvm.Lv.size_in_extents lv) extent_size_mib in
+           debug "LV %s is %Ld MiB" freename size_mib;
            if size_mib < config.Config.host_low_water_mark then begin
              info "LV %s is %Ld MiB < low_water_mark %Ld MiB; allocating %Ld MiB"
                freename size_mib config.Config.host_low_water_mark config.Config.host_allocation_quantum;
@@ -743,16 +746,20 @@ let run port sock_path config =
 
     let rec service_queues () =
       (* 0. Have any local allocators restarted? *)
+      debug "service_queues: About to (0): resend_free_volumes";
       FreePool.resend_free_volumes config
       >>= fun () ->
       (* 1. Do any of the host free LVs need topping up? *)
+      debug "service_queues: About to (1): top_up_free_volumes";
       FreePool.top_up_free_volumes config
       >>= fun () ->
 
       (* 2. Are there any pending LVM updates from hosts? *)
+      debug "service_queues: about to (2): flush_all";
       VolumeManager.flush_all ()
       >>= fun () ->
 
+      debug "service_queues: about to (3): sleep";
       Lwt_unix.sleep 5.
       >>= fun () ->
       service_queues () in
