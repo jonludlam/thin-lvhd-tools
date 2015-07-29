@@ -473,6 +473,7 @@ let main use_mock config daemon socket journal fromLVM toLVM =
       (* read one line *)
       Lwt_io.read_line ic
       >>= fun message ->
+      debug "Got request: %s" message;
       let r = ResizeRequest.t_of_sexp (Sexplib.Sexp.of_string message) in
       handler r
       >>= fun resp ->
