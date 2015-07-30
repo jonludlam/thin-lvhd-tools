@@ -71,15 +71,17 @@ if [ "$lvsize"x = "10485760s"x ]; then echo "Pass lvextend Test"; else echo "Fai
 ./xenvm.native host-connect /dev/djstest host1 $MOCK_ARG
 
 cat test.local_allocator.conf.in | sed -r "s|@BIGDISK@|$LOOP|g"  | sed -r "s|@HOST@|host1|g" > test.local_allocator.host1.conf
-./local_allocator.native --config ./test.local_allocator.host1.conf $MOCK_ARG > /dev/null &
+./local_allocator.native --config ./test.local_allocator.host1.conf $MOCK_ARG > local_allocator.host1.log &
 
 ./xenvm.native host-create /dev/djstest host2 $MOCK_ARG
 ./xenvm.native host-connect /dev/djstest host2 $MOCK_ARG
 cat test.local_allocator.conf.in | sed -r "s|@BIGDISK@|$LOOP|g"  | sed -r "s|@HOST@|host2|g" > test.local_allocator.host2.conf
-./local_allocator.native --config ./test.local_allocator.host2.conf $MOCK_ARG > /dev/null &
+./local_allocator.native --config ./test.local_allocator.host2.conf $MOCK_ARG > local_allocator.host2.log &
 
 sleep 30
 ./xenvm.native host-list /dev/djstest $MOCK_ARG
+
+exit 0
 
 # destroy hosts
 ./xenvm.native host-disconnect /dev/djstest host2 $MOCK_ARG
