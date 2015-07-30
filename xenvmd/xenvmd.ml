@@ -472,8 +472,9 @@ module VolumeManager = struct
           Lvm.Vg.LVs.fold (fun key v acc ->
               debug "Checking LV: %s" v.Lvm.Lv.name;
               let name = v.Lvm.Lv.name in
-              match Stringext.split name ~on:'_' with
-              | [host; "toLVM"] ->
+              match Stringext.split name ~on:'-' |> List.rev with
+              | "toLVM" :: host_bits ->
+                let host = String.concat "-" (List.rev host_bits) in
                 debug "This is a 'toLVM' LV";
                 (* It's a toLVM - check to see whether it has the 'connected' flag *)
                 let tags = List.map Lvm.Name.Tag.to_string v.Lvm.Lv.tags in
