@@ -198,9 +198,9 @@ module VolumeManager = struct
   let free_LVs = ref []
 
   (* Conventional names of the metadata volumes *)
-  let toLVM host = host ^ "_toLVM"
-  let fromLVM host = host ^ "_fromLVM"
-  let freeLVM host = host ^ "_free"
+  let toLVM host = host ^ "-toLVM"
+  let fromLVM host = host ^ "-fromLVM"
+  let freeLVM host = host ^ "-free"
 
   module Host = struct
     let create name =
