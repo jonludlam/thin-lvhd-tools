@@ -69,14 +69,17 @@ let is_xenvmd_ok vg =
   with _ ->
     false
 
-let wait_for_xenvmd_to_start vg =
-  let rec retry () =
+let wait_for_xenvmd_to_start ?(timeout=30.0) vg =
+  let rec retry t =
+    if t>timeout
+    then failwith "Timeout"
+    else 
     if is_xenvmd_ok vg
     then ()
-    else (Thread.delay 0.1; retry ())
-  in retry ()
+    else (Thread.delay 0.1; retry (t+.0.1))
+  in retry 0.0
 
-let with_xenvmd ?existing_vg ?(cleanup_vg=true) (f : string -> string -> 'a) =
+let with_xenvmd ?(binary="./xenvmd.native") ?existing_vg ?(cleanup_vg=true) ?(daemon=false) ?(watchdog=false) (f : string -> string -> 'a) =
   let host = 1 in
   let with_xenvmd_running loop =
     set_vg_info loop vg host;
@@ -91,7 +94,11 @@ let with_xenvmd ?existing_vg ?(cleanup_vg=true) (f : string -> string -> 'a) =
       } in
       Sexplib.Sexp.to_string_hum (Config.Xenvmd.sexp_of_t config)
       |> file_of_string "test.xenvmd.conf";
-      let _ = Lwt_preemptive.detach (fun () -> xenvmd [ "--config"; "./test.xenvmd.conf"; "--log"; "xenvmd.log"]) () in
+
+      let _ = Lwt_preemptive.detach (fun () -> run binary (
+          [ "--config"; Filename.concat (Unix.getcwd ()) "test.xenvmd.conf"; "--log"; Filename.concat (Unix.getcwd ()) "xenvmd.log"] @
+          (if daemon then ["--daemon"] else []) @ (if watchdog then ["--watchdog"] else [])
+        )) () in
       wait_for_xenvmd_to_start vg;
       Xenvm_client.Rpc.uri := "file://local/services/xenvmd/" ^ vg;
       Xenvm_client.unix_domain_socket_path := "/tmp/xenvmd";
@@ -108,6 +115,48 @@ let with_xenvmd ?existing_vg ?(cleanup_vg=true) (f : string -> string -> 'a) =
       )
     )
 
+let test_watchdog =
+  "watchdog: check that xenvmd can still exit correctly" >::
+  fun () ->
+    Printf.printf "*** Starting test_watchdog\n%!";
+    with_xenvmd ~daemon:true ~watchdog:true (fun _ _ -> ());
+    Printf.printf "*** Finished test_watchdog\n%!"
+
+let test_watchdog_upgrade =
+  "watchdog: check that the watchdog will correctly execute a new binary" >::
+  fun () ->
+    Printf.printf "*** Starting test_watchdog_upgrade\n%!";
+    run "cp" ["_build/xenvmd/xenvmd.native"; "/tmp/myxenvmd"] |> ignore_string;
+    with_xenvmd ~binary:"/tmp/myxenvmd" ~daemon:true ~watchdog:true (fun _ _ ->
+        let pidfile = "/tmp/xenvmd.lock" in
+        Lwt_main.run
+          (Lwt_io.(with_file input pidfile read)
+           >>= fun pid ->
+           run "rm" ["-f"; "/tmp/isok"] |> ignore_string; 
+           run "mv" ["/tmp/myxenvmd"; "/tmp/myxenvmd.old"] |> ignore_string;
+           Lwt_io.(with_file ~perm:0o755 ~mode:output "/tmp/myxenvmd" (fun oc -> write oc "#!/bin/bash\necho ok > /tmp/isok\n/tmp/myxenvmd.old $@"))
+           >>= fun () ->
+           run "kill" [ pid ] |> ignore_string;
+           wait_for_xenvmd_to_start vg;
+           Lwt_io.(with_file input "/tmp/isok" read)
+           >>= fun ok ->
+           assert_equal ok "ok\n";
+           Lwt.return ()));
+    Printf.printf "*** Finished test_watchdog_upgrade\n%!"
+
+let test_watchdog_bad_exit =
+  "watchdog: check that killing the subprocess badly causes it to get restarted" >::
+  fun () ->
+    with_xenvmd ~daemon:true ~watchdog:true (fun _ _ ->
+        let pidfile = "/tmp/xenvmd.lock" in
+        Lwt_main.run
+          (Lwt_io.(with_file input pidfile read)
+           >>= fun pid ->
+           run "kill" [ pid ] |> ignore_string;
+           Lwt.return ());
+        wait_for_xenvmd_to_start vg
+      )
+  
 let la_has_started host =
   let dm_name = "XXXdoesntexistXXX" in
   let s = Lwt_unix.socket Lwt_unix.PF_UNIX Lwt_unix.SOCK_STREAM 0 in
@@ -262,6 +311,9 @@ let no_xenvmd_suite = "Commands which should work without xenvmd" >::: [
   lvchange_offline;
   pvremove;
   upgrade;
+  test_watchdog;
+  test_watchdog_upgrade;
+  test_watchdog_bad_exit;
 ]
 
 let assert_lv_exists ?expected_size_in_extents name =
@@ -668,7 +720,9 @@ let local_allocator_suite device = "Commands which require the local allocator" 
 
 let _ =
   Random.self_init ();
-  List.iter (fun host -> let configdir = Common.get_configdir host in mkdir_rec configdir 0o0755) [1;2;3;4] in
+  (* Remove stale mock dm config files *)
+  List.iter (fun host -> let f = Printf.sprintf "dm-mock-%d" host in try Unix.unlink f with _ -> ()) [1;2;3;4];
+  List.iter (fun host -> let configdir = Common.get_configdir host in mkdir_rec configdir 0o0755) [1;2;3;4];
   let check_results_with_exit_code results =
     if List.exists (function RFailure _ | RError _ -> true | _ -> false) results
     then exit 1 in
